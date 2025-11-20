@@ -1,129 +1,99 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8">
-  <title>Object 0001-v4 — Fixed & Blazing Fast (256x256 WASM Square Animator)</title>
-  <style>
-    body {margin:0;background:#0d1117;color:#c9d1d9;font-family:system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;padding:2rem;}
-    canvas {image-rendering:pixelated;border:4px solid #58a6ff;border-radius:16px;background:#000;box-shadow:0 0 40px #58a6ff80;}
-    h1 {color:#ff79c6;margin-bottom:0.5rem;}
-    p {max-width:800px;text-align:center;}
-    pre {background:#161b22;padding:1rem;border-radius:12px;max-width:900px;overflow-x:auto;border:1px solid #30363d;margin:2rem 0;}
-  </style>
+<title>Wasm Animation Example</title>
 </head>
 <body>
-
-  <h1>Object 0001-v4 — Guaranteed Rendering • Pure WASM X-Axis Loop</h1>
-  <p>Square now <strong>always renders</strong> • Simple +1 pixel per frame movement • Fastest possible buffer transfer</p>
-
   <canvas id="c" width="256" height="256"></canvas>
 
-  <!-- Fixed & Ultra-Reliable WASM (works in every browser) -->
-  <script type="text/wat" id="wasm-source">
+  <!-- WebAssembly Text Module -->
+  <script type="text/wat">
   (module
-    (memory (export "memory") 2)        ;; 128 KB = exactly 256×256×4
+    (memory (export "mem") 1)
+    (global $frame_counter (mut i32) i32.const 0)
+    (global $CANVAS_SIZE i32 (i32.const 65536)) ;; 256 * 256 pixels
 
-    (global $pos_x (mut i32) (i32.const 103))   ;; start at x = 103 (centered-ish)
+    ;; Function to update the frame and return the new color
+    (func (export "update_frame") (result i32)
+      (local $color i32)
+      (local $i i32)
+      (local $current_count i32)
 
-    (func (export "updateAndRender") (param $ticks i32)
-      (local $x i32)
-      (local $y i32)
-      (local $addr i32)
+      ;; Increment and store frame counter
+      global.get $frame_counter
+      i32.const 1
+      i32.add
+      global.set $frame_counter
 
-      ;; Clear screen to dark blue
-      (memory.fill (i32.const 0) (i32.const 0xFF0C1224) (i32.const 262144))
+      ;; Calculate a new color based on the frame counter (e.g., a simple pulse)
+      global.get $frame_counter
+      i32.const 64
+      i32.rem_u ;; cycle every 64 frames
+      i32.const 4 ;; scaling factor for color change
+      i32.mul
+      local.set $color ;; $color ranges from 0 to 255
 
-      ;; Move square right by 1 pixel per frame, loop at edges
-      (global.set $pos_x
-        (i32.add (global.get $pos_x) (i32.const 1))
+      ;; Combine $color into an RGBA format (ABGR in little-endian wasm memory)
+      ;; Use a simple color like pulsing red: 0xFF<color>0000 (AARRGGBB)
+      i32.const 0xFF000000 ;; Alpha (fully opaque) and other channels zero
+      local.get $color
+      i32.shl ;; Shift color value to the green channel position
+      local.set $color
+      i32.const 0xFF000000 ;; Full alpha
+      local.get $color
+      i32.or
+      local.set $color
+
+
+      ;; Fill memory with the new color
+      (loop
+        local.get $i
+        local.get $color
+        i32.store (local.get $i) ;; Store 4 bytes at once (i32)
+
+        local.set $i (i32.add (local.get $i) (i32.const 4))
+        global.get $CANVAS_SIZE
+        i32.const 4
+        i32.mul ;; loop up to 256 * 256 * 4 bytes
+        br_if 0 (i32.lt_u (local.get $i) (i32.const 262144))
       )
-      (if (i32.ge_u (global.get $pos_x) (i32.const 206))
-        (then (global.set $pos_x (i32.const 50)))
-      )
-
-      ;; Draw 50×50 bright cyan square
-      (local.set $y (i32.const 103))
-      (block $end_y
-        (loop $loop_y
-          (br_if $end_y (i32.ge_u (local.get $y) (i32.const 153)))
-
-          (local.set $x (global.get $pos_x))
-          (block $end_x
-            (loop $loop_x
-              (br_if $end_x (i32.ge_u (local.get $x) (i32.add (global.get $pos_x) (i32.const 50))))
-
-              (local.set $addr
-                (i32.mul
-                  (i32.add
-                    (i32.mul (local.get $y) (i32.const 256))
-                    (local.get $x))
-                  (i32.const 4)))
-
-              (i32.store (local.get $addr) (i32.const 0xFF88FFFF))  ;; ARGB cyan
-
-              (local.set $x (i32.add (local.get $x) (i32.const 1)))
-              (br $loop_x)
-            )
-          )
-
-          (local.set $y (i32.add (local.get $y) (i32.const 1)))
-          (br $loop_y)
-        )
-      )
+      local.get $color ;; Return the color used for demonstration
     )
   )
   </script>
 
+  <!-- JavaScript glue code for animation loop -->
   <script>
-    (async () => {
-      const canvas = document.getElementById('c');
-      const ctx = canvas.getContext('2d');
-      const imageData = ctx.createImageData(256, 256);
-      const buf = new Uint8ClampedArray(imageData.data.buffer);
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width;
+    const height = canvas.height;
 
-      // Compile WASM — universal fallback that works everywhere
-      let wasm;
-      const wat = document.getElementById('wasm-source').textContent;
+    WebAssembly.instantiate(document.querySelector('script[type="text/wat"]').textContent, {})
+      .then(obj => {
+        const exports = obj.instance.exports;
+        const mem = exports.mem;
+        const memorySize = width * height * 4; // 256*256*4 bytes
 
-      try {
-        wasm = await WebAssembly.instantiate(wat, {});
-      } catch (e) {
-        // Fallback: send .wat to public compiler
-        const resp = await fetch('https://wasm.run/wat', {
-          method: 'POST',
-          body: wat,
-          headers: {'Content-Type': 'text/plain'}
-        });
-        const binary = await resp.arrayBuffer();
-        wasm = await WebAssembly.instantiate(binary, {});
-      }
+        function renderLoop() {
+          // 1. Update pixel data in wasm memory
+          exports.update_frame();
 
-      const { memory, updateAndRender } = wasm.instance.exports;
+          // 2. Create ImageData from the shared Wasm memory
+          // The buffer view must be inside the loop to see the updated data
+          const memBuffer = new Uint8ClampedArray(mem.buffer, 0, memorySize);
+          const imageData = new ImageData(memBuffer, width, height);
 
-      // Fastest possible transfer: direct view into WASM memory
-      const pixels = new Uint8ClampedArray(memory.buffer, 0, 262144);
+          // 3. Put the new image data onto the canvas
+          ctx.putImageData(imageData, 0, 0);
 
-      let frameCount = 0;
-      const animate = () => {
-        updateAndRender(frameCount++);     // Pure WASM animation logic
-        buf.set(pixels);                   // Zero-copy transfer
-        ctx.putImageData(imageData, 0, 0);
-        requestAnimationFrame(animate);
-      };
+          // 4. Request the next frame
+          window.requestAnimationFrame(renderLoop);
+        }
 
-      animate();
-    })();
+        // Start the animation loop
+        window.requestAnimationFrame(renderLoop);
+      });
   </script>
-
-  <pre>
-// Object 0001-v4 — Bulletproof Specification
-// - Guaranteed visible square (tested Nov 20, 2025)
-// - Animation: +1 pixel per frame on X axis with wrap-around
-// - Zero JS math in render loop
-// - Fastest buffer transfer: direct Uint8ClampedArray view into WASM memory
-// - Single-file, zero dependencies, works offline
-// Ready for recursive refinement into 3D, particles, raytracing...
-  </pre>
-
 </body>
 </html>
