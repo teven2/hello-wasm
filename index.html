@@ -42,31 +42,77 @@
     });
     </pre>
 
-    <!-- Example 2 -->
-    <h2>The obligatory hello world</h2>
-    <div class="owasm" id="wasm_output_ex2"></div class="owasm">
-    <pre>
-    ;;wasm
-    (module
-        (memory (export "memory") 1)
-        (func (export "hello") (result i32)
-            i32.const 16
-        )
-        (data (i32.const 16)
-            "Hello World"
-        )
-    )        
+<!-- Example 2 - Now with VISIBLE PIXELS! -->
+<h2>2. Draw a colorful 256×256 pixel block (visible!)</h2>
+<div class="owasm" id="wasm_output_ex2" style="width:256px; height:256px; image-rendering:pixelated; margin:1rem 0;">
+  <canvas id="pixelCanvas" width="256" height="256" style="width:100%; height:auto; border:2px solid #58a6ff; border-radius:8px;"></canvas>
+</div>
 
-    // in JS call it with:
-    const iw = require('inline-webassembly');
-    const wasm = `;;wasm
-        your wasm code here
-    `;
-    iw(wasm).then((wasmModule) => {
-        const stringPointer = wasmModule.hello(44, 99);
-        const string = wasmModule.readString(stringPointer);
-    });
-    </pre>
+<pre>;;wasm
+(module
+  (memory (export "memory") 2)                  ;; 2 pages = 128 KiB → enough for 256×256×4 RGBA
+
+  (func (export "drawPixels") (result i32)
+    (local $i i32)
+    (local $ptr i32)
+
+    ;; Start writing at offset 0
+    (set_local $ptr (i32.const 0))
+
+    (block
+      (loop
+        ;; Stop after 256×256 pixels
+        (br_if 1 (i32.ge_u (get_local $i) (i32.const 65536)))
+
+        ;; Compute x = i % 256, y = i / 256
+        (local.set $x (i32.rem_u (get_local $i) (i32.const 256)))
+        (local.set $y (i32.div_u (get_local $i) (i32.const 256)))
+
+        ;; Fun plasma-like pattern (you can change this!)
+        ;; R = (x + time) % 256
+        ;; G = (y + x)   % 256
+        ;; B = (y * 2)   % 256
+        (i32.store8 (get_local $ptr)      (i32.add (get_local $x) (i32.const 100)))  ;; R
+        (i32.store8 (i32.add (get_local $ptr) (i32.const 1))
+                    (i32.xor (get_local $x) (get_local $y)))                        ;; G
+        (i32.store8 (i32.add (get_local $ptr) (i32.const 2))
+                    (i32.mul (get_local $y) (i32.const 2)))                         ;; B
+        (i32.store8 (i32.add (get_local $ptr) (i32.const 3)) (i32.const 255))        ;; A = full opacity
+
+        ;; Advance pointer by 4 bytes (RGBA)
+        (set_local $ptr (i32.add (get_local $ptr) (i32.const 4)))
+        (set_local $i   (i32.add (get_local $i)   (i32.const 1)))
+        (br 0)
+      )
+    )
+
+    ;; Return pointer to pixel data (offset 0)
+    (i32.const 0)
+  )
+)
+</pre>
+
+<script>
+// Run this example automatically when the page loads
+document.addEventListener("DOMContentLoaded", async () => {
+  if (!document.getElementById("pixelCanvas")) return;
+
+  const canvas = document.getElementById("pixelCanvas");
+  const ctx = canvas.getContext("2d");
+  const imageData = ctx.createImageData(256, 256);
+
+  const wasmCode = document.querySelector("#wasm_output_ex2 pre").textContent.trim();
+  const module = await inlineWebAssembly(wasmCode);  // from your bundle.js
+
+  // Fill the buffer with colorful pixels
+  module.drawPixels();
+
+  // Copy WASM linear memory → ImageData
+  const pixels = new Uint8ClampedArray(module.memory.buffer, 0, 256*256*4);
+  imageData.data.set(pixels);
+  ctx.putImageData(imageData, 0, 0);
+});
+</script>
 
     <!-- Example 3 -->
     <h2>Call a JS function</h2>
